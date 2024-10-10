@@ -1,9 +1,14 @@
 package blockchain
 
 import (
+	"crypto/ecdsa"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
+
+	"github.com/amrshaban2005/go-blockchain/utils"
 )
 
 const (
@@ -33,9 +38,23 @@ func (bc *Blockchain) CreateBlock(nonce int, previousHash [32]byte) *Block {
 	return b
 }
 
-func (bc *Blockchain) AddTransactions(sender, recipient string, value float32) bool {
+func (bc *Blockchain) AddTransactions(sender, recipient string, value float32, senderPublicKey *ecdsa.PublicKey, s *utils.Signature) bool {
 	t := NewTransaction(sender, recipient, value)
-	bc.transactionPool = append(bc.transactionPool, t)
+	if sender == MINING_SENDER {
+		bc.transactionPool = append(bc.transactionPool, t)
+		return true
+	}
+	if bc.VerifyTransactionSignature(senderPublicKey, s, t) {
+		if bc.CalculateTotalAmount(sender) < t.value {
+			log.Println("Error: not enough balance in wallet")
+			return false
+		}
+		bc.transactionPool = append(bc.transactionPool, t)
+		return true
+	} else {
+		log.Println("Error: could not verify the transaction")
+	}
+
 	return false
 }
 
@@ -68,13 +87,18 @@ func (bc *Blockchain) ProofOfWork() int {
 }
 
 func (bc *Blockchain) Mining() bool {
-
-	bc.AddTransactions(MINING_SENDER, bc.blockchainAddress, MINING_REWARD)
+	bc.AddTransactions(MINING_SENDER, bc.blockchainAddress, MINING_REWARD, nil, nil)
 	nonce := bc.ProofOfWork()
 	previousHash := bc.LastBlock().Hash()
 	bc.CreateBlock(nonce, previousHash)
 	log.Println("action=mining, status=success")
 	return true
+}
+
+func (bc *Blockchain) VerifyTransactionSignature(senderPublicKey *ecdsa.PublicKey, s *utils.Signature, t *Transaction) bool {
+	m, _ := json.Marshal(t)
+	h := sha256.Sum256([]byte(m))
+	return ecdsa.Verify(senderPublicKey, h[:], s.R, s.S)
 }
 
 func (bc *Blockchain) CalculateTotalAmount(blockchainAddress string) float32 {
