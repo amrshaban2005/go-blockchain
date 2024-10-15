@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/amrshaban2005/go-blockchain/utils"
 )
@@ -15,20 +17,32 @@ const (
 	MINING_DIFFICULTY = 3
 	MINING_SENDER     = "BLOCKCHAIN REWARD SYSTSM (minting & fees)"
 	MINING_REWARD     = 1.0
+	MINING_TIMER_SEC  = 20
 )
 
 type Blockchain struct {
 	transactionPool   []*Transaction
 	chain             []*Block
 	blockchainAddress string
+	port              uint16
+	mux               sync.Mutex
 }
 
-func NewBlockchain(blockchainAddress string) *Blockchain {
+func NewBlockchain(blockchainAddress string, port uint16) *Blockchain {
 	b := &Block{}
 	bc := new(Blockchain)
 	bc.blockchainAddress = blockchainAddress
 	bc.CreateBlock(0, b.Hash())
+	bc.port = port
 	return bc
+}
+
+func (bc *Blockchain) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Blocks []*Block `json:"chain"`
+	}{
+		Blocks: bc.chain,
+	})
 }
 
 func (bc *Blockchain) CreateBlock(nonce int, previousHash [32]byte) *Block {
@@ -38,6 +52,16 @@ func (bc *Blockchain) CreateBlock(nonce int, previousHash [32]byte) *Block {
 	return b
 }
 
+func (bc *Blockchain) TransactionPool() []*Transaction {
+	return bc.transactionPool
+}
+
+func (bc *Blockchain) CreateTransactions(sender, recipient string, value float32, senderPublicKey *ecdsa.PublicKey, s *utils.Signature) bool {
+	isTransacted := bc.AddTransactions(sender, recipient, value, senderPublicKey, s)
+
+	return isTransacted
+}
+
 func (bc *Blockchain) AddTransactions(sender, recipient string, value float32, senderPublicKey *ecdsa.PublicKey, s *utils.Signature) bool {
 	t := NewTransaction(sender, recipient, value)
 	if sender == MINING_SENDER {
@@ -45,16 +69,17 @@ func (bc *Blockchain) AddTransactions(sender, recipient string, value float32, s
 		return true
 	}
 	if bc.VerifyTransactionSignature(senderPublicKey, s, t) {
-		if bc.CalculateTotalAmount(sender) < t.value {
-			log.Println("Error: not enough balance in wallet")
-			return false
-		}
+		// if bc.CalculateTotalAmount(sender) < t.value {
+		// 	log.Println("Error: not enough balance in wallet")
+		// 	return false
+		// }
 		bc.transactionPool = append(bc.transactionPool, t)
+		log.Println("Error1")
 		return true
 	} else {
 		log.Println("Error: could not verify the transaction")
 	}
-
+	log.Println("Error2")
 	return false
 }
 
@@ -87,12 +112,25 @@ func (bc *Blockchain) ProofOfWork() int {
 }
 
 func (bc *Blockchain) Mining() bool {
+	bc.mux.Lock()
+
+	defer bc.mux.Unlock()
+
+	if len(bc.TransactionPool()) == 0 {
+		return false
+	}
+
 	bc.AddTransactions(MINING_SENDER, bc.blockchainAddress, MINING_REWARD, nil, nil)
 	nonce := bc.ProofOfWork()
 	previousHash := bc.LastBlock().Hash()
 	bc.CreateBlock(nonce, previousHash)
 	log.Println("action=mining, status=success")
 	return true
+}
+
+func (bc *Blockchain) StartMining() {
+	bc.Mining()
+	_ = time.AfterFunc(time.Second*MINING_TIMER_SEC, bc.StartMining)
 }
 
 func (bc *Blockchain) VerifyTransactionSignature(senderPublicKey *ecdsa.PublicKey, s *utils.Signature, t *Transaction) bool {
