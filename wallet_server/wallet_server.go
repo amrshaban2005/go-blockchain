@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -61,7 +62,7 @@ func (ws *WalletServer) CreateTransaction(w http.ResponseWriter, r *http.Request
 	switch r.Method {
 	case http.MethodPost:
 		w.Header().Add("Content-Type", "application/json")
-		//io.Writer.Write(w, utils.JsonStatus("test"))
+
 		decoder := json.NewDecoder(r.Body)
 		var t wallet.TransactionRequest
 		err := decoder.Decode(&t)
@@ -112,10 +113,58 @@ func (ws *WalletServer) CreateTransaction(w http.ResponseWriter, r *http.Request
 	}
 }
 
+func (ws *WalletServer) WalletAmount(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		blockchainAdd := r.URL.Query().Get("blockchain_address")
+		endpoint := fmt.Sprintf("%v/amount", ws.Gateway())
+		client := &http.Client{}
+		bcnRequest, _ := http.NewRequest("GET", endpoint, nil)
+		q := bcnRequest.URL.Query()
+		q.Add("blockchain_address", blockchainAdd)
+		bcnRequest.URL.RawQuery = q.Encode()
+
+		bcnResponse, err := client.Do(bcnRequest)
+		if err != nil {
+			log.Printf("Error: %v", err)
+			io.Writer.Write(w, utils.JsonStatus("fail"))
+			return
+		}
+		w.Header().Add("Content-Type", "application/json")
+		if bcnResponse.StatusCode == 200 {
+			decoder := json.NewDecoder(bcnResponse.Body)
+			var baresp blockchain.AmountResponse
+			err = decoder.Decode(&baresp)
+
+			if err != nil {
+				log.Printf("Error: %v", err)
+				io.Writer.Write(w, utils.JsonStatus("fail"))
+				return
+			}
+			m, _ := json.Marshal(struct {
+				Message string  `json:"message"`
+				Amount  float32 `json:"amount"`
+			}{
+				Message: "success",
+				Amount:  baresp.Amount,
+			})
+
+			io.Writer.Write(w, m[:])
+		} else {
+			io.Writer.Write(w, utils.JsonStatus("fail"))
+		}
+
+	default:
+		w.WriteHeader(http.StatusBadRequest)
+		log.Println("Error: invalid http method")
+	}
+}
+
 func (ws *WalletServer) Run() {
 	http.HandleFunc("/", ws.Index)
 	http.HandleFunc("/wallet", ws.Wallet)
 	http.HandleFunc("/transaction", ws.CreateTransaction)
+	http.HandleFunc("/wallet/amount", ws.WalletAmount)
 
 	log.Fatal(http.ListenAndServe("0.0.0.0:"+strconv.Itoa(int(ws.Port())), nil))
 }
